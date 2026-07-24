@@ -57,18 +57,20 @@ dump "--show-profile=pg-pg" -- --show-profile=pg-pg
 
 # --- ADRs (NO scan) ---
 for f in config delivery mapping ordering reprocessing rpo-rto transactions \
-         initial-load transforms; do
+         initial-load; do
   dump "--help-$f" -- "--help-$f"
 done
 
-# --- worker + connector param help (WITH scan-plugins) ---
-for f in worker-params \
+# --- worker/connector param help + transforms (WITH scan-plugins, rendered as markdown).
+# These support --format=markdown; the flag is added to the RUN args only — the sandbox
+# key stays "--help-<f>" so the user types the real command. isMarkdown() then renders it.
+for f in worker-params transforms \
          pg-source-params tnt-source-params tnt-sink-params \
          tqe-source-params tqe-sink-params kafka-source-params kafka-sink-params \
          jdbc-sink-params es-sink-params mock-source-params mock-sink-params \
          ingestor-sink-params clickhouse-sink-params mongodb-source-params \
          oracle-source-params sqlserver-source-params; do
-  dumpp "--help-$f" -- "--help-$f"
+  dumpp "--help-$f" -- "--help-$f" --format=markdown
 done
 
 # --- preset runbooks: full + --simple, bare + -helm (NO scan) ---

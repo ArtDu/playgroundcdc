@@ -20,9 +20,10 @@ make help-playground                         # from repo root; picks JDK 21
 JAVA_HOME=<jdk21> PLUGINS_DIR=<plugins> playground/build.sh [path/to/cdc-worker.jar]
 ```
 
-Bakes `../cdc-playground.html` (git-ignored — regenerate, don't commit).
-Connectors whose plugin isn't installed are skipped; `make plugins` first for
-the full set of `--help-*-params`.
+Bakes `../cdc-playground.html` — a ready-to-open static site (**committed** to the
+repo so anyone can open it without a JDK or build). Regenerate and re-commit it
+whenever the worker's help output changes. Connectors whose plugin isn't installed
+are skipped; `make plugins` first for the full set of `--help-*-params`.
 
 ## Files (the source of truth — the HTML is generated)
 

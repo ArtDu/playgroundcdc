@@ -39,16 +39,24 @@ const wr=t=>term.write(t.replace(/\n/g,"\r\n"));
 const keys = Object.keys(CMDS);
 const tutNames = Object.keys(TUTS);
 
-// ADR-команды выдают markdown (заголовки, таблицы, code-fence) — их рендерим красиво.
-// Runbook'и (docker/helm) НЕ markdown: там # это shell-комментарии, рендерить нельзя.
-const MD_CMDS = new Set(["--help-config","--help-delivery","--help-mapping","--help-ordering",
-  "--help-reprocessing","--help-rpo-rto","--help-transactions","--help-initial-load"]);
+// Определяем, markdown ли вывод команды — рендерим его красиво. Runbook'и (docker/helm)
+// НЕ markdown: там # это shell-комментарии. Правило: frontmatter ---, ИЛИ md-таблица
+// (|...| + строка-разделитель |---|), ИЛИ #/##-заголовок при отсутствии shell-команд.
+function isMarkdown(t){
+  const runbook = t.startsWith("# ===") || /(?:^|\n)(?:docker run|cat > |helm (?:upgrade|install))/.test(t);
+  if(runbook) return false;
+  if(t.startsWith("---\n")) return true;                                  // frontmatter
+  if(/(?:^|\n)\|.*\|.*\n\|[\s:|-]+\|/.test(t)) return true;               // md-таблица
+  if(/(?:^|\n)#{1,4} \S/.test(t)) return true;                            // #/## заголовок
+  return false;
+}
 
 // Мини-рендер markdown -> ANSI для xterm (заголовки, code, таблицы, списки, bold, frontmatter).
 function mdRender(src){
   const B="\x1b[1m", CY="\x1b[38;5;117m", GR="\x1b[38;5;108m", GRAY="\x1b[38;5;245m", RS="\x1b[0m";
-  const lines=src.split("\n"), out=[]; let inFence=false, fenceBuf=[];
+  const lines=src.split("\n"), out=[]; let inFence=false, fenceBuf=[], tblHdr=null;
   const inline=s=>s
+    .replace(/<\/?code>/g,"`").replace(/<[^>]+>/g,"")   // <code>..</code> -> `..`, прочие теги вон
     .replace(/`([^`]+)`/g, CY+"$1"+RS)               // `код`
     .replace(/\*\*([^*]+)\*\*/g, B+"$1"+RS)          // **жирный**
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");        // [текст](ссылка) -> текст
@@ -64,10 +72,30 @@ function mdRender(src){
     let m;
     if(m=l.match(/^(#{1,4})\s+(.*)$/)){ const t=inline(m[2]);
       out.push(""+B+(m[1].length<=2?CY:"")+t+RS); continue; }
-    if(l.match(/^\|.*\|/)){                              // строка таблицы
+    if(l.startsWith("|")){                              // строка таблицы (начинается с |)
+      // склеиваем возможное продолжение ячейки: следующие строки, пока не закрыт ряд '|'
+      while((l.split("|").length-1) < 2 || !l.trimEnd().endsWith("|")){
+        if(i+1>=lines.length) break;
+        l += " " + lines[++i].trim();
+      }
       if(l.match(/^\|[\s:|-]+\|?\s*$/)){ continue; }     // разделитель |---|---| пропускаем
-      const cells=l.split("|").slice(1,-1).map(c=>inline(c.trim()));
-      out.push("  "+cells.join(GRAY+" · "+RS)); continue; }
+      const raw=l.replace(/\|\s*$/,"").split("|").slice(1).map(c=>c.trim());
+      // params-таблица коннектора: шапка Name|Type|Default|Required|Description → карточки
+      const isHdr=/^name$/i.test(raw[0])&&raw.some(c=>/^description$/i.test(c));
+      if(isHdr){ tblHdr=raw.map(c=>c.toLowerCase()); continue; }   // шапку не печатаем, запоминаем
+      if(tblHdr && tblHdr[0]==="name"){
+        const g=n=>{ const k=tblHdr.indexOf(n); return k>=0?raw[k]:""; };
+        const name=g("name"), type=g("type"), def=g("default"), req=g("required"), desc=g("description");
+        const meta=[type, def?("= "+def):"", /^yes$/i.test(req)?"обязателен":""].filter(Boolean).join(", ");
+        out.push("  "+B+CY+name+RS+(meta?"  "+GRAY+"("+inline(meta)+")"+RS:""));
+        if(desc) out.push("      "+inline(desc));
+        continue;
+      }
+      // прочие (ADR) таблицы — компактно через разделитель
+      const cells=raw.map(c=>inline(c));
+      out.push("  "+cells.filter(c=>c!=="").join(GRAY+" · "+RS)); continue;
+    }
+    if(l.trim()==="") tblHdr=null;                       // пустая строка закрывает таблицу
     if(m=l.match(/^(\s*)[-*]\s+(.*)$/)){ out.push(m[1]+CY+"• "+RS+inline(m[2])); continue; }
     if(m=l.match(/^(\s*)>\s?(.*)$/)){ out.push(GRAY+"  ▎ "+inline(m[2])+RS); continue; }
     out.push(inline(l));
@@ -497,7 +525,7 @@ function run(input){
   if(cmd==="tutorial"||cmd==="tutorials"){ wr("\r\nВыберите: "+tutNames.map(n=>"tutorial "+n).join("\r\n")); prompt(); return; }
   if(cmd.startsWith("tutorial ")){ startTut(cmd.slice(9).trim()); return; }
   const out=CMDS[cmd];
-  if(out!==undefined){ term.write("\r\n"+(MD_CMDS.has(cmd)?mdRender(out):out.replace(/\n/g,"\r\n"))); }
+  if(out!==undefined){ term.write("\r\n"+(isMarkdown(out)?mdRender(out):out.replace(/\n/g,"\r\n"))); }
   else {
     const near=keys.filter(k=>k.startsWith(cmd.split(" ")[0])).slice(0,8);
     wr("\r\n\x1b[31mUnknown command:\x1b[0m "+cmd+(near.length?"\r\nПохожие: "+near.join("  "):"\r\nНаберите help")+"\r\n"+DIM+"(симуляция — доступны только вшитые команды)"+R);
